@@ -22,18 +22,20 @@ pub struct App {
     pub input_mode: InputMode,
     pub messages: Vec<String>,
     pub lineNames: Vec<String>,
+    pub lineData: Vec<Line>,
     pub focus: Option<Focus>,
     pub line_selected: Option<usize>,
     pub lines_tree_size: Option<usize>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LineStatus {
-    id: i32,
-    statusSeverity: i32,
-    statusSeverityDescription: String,
+    pub id: i32,
+    pub statusSeverity: i32,
+    pub statusSeverityDescription: String,
+    pub reason: Option<String>
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Disruption {
     category: String,
     categoryDescription: String,
@@ -42,13 +44,13 @@ pub struct Disruption {
     additionalInfo: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Line {
-    id: String,
-    name: String,
-    modeName: String,
-    disruptions: Vec<Disruption>,
-    lineStatuses: Vec<LineStatus>,
+    pub id: String,
+    pub name: String,
+    pub modeName: String,
+    pub disruptions: Vec<Disruption>,
+    pub lineStatuses: Vec<Option<LineStatus>>,
     // routeSections: Vec<String>,
     // serviceTypes: Vec<ServiceType>,
 }
@@ -60,6 +62,7 @@ impl Default for App {
             input_mode: InputMode::Normal,
             messages: Vec::new(),
             lineNames: Vec::new(),
+            lineData: Vec::new(),
             focus: None,
             line_selected: Some(0),
             lines_tree_size: Some(0)
@@ -70,14 +73,11 @@ impl Default for App {
 #[tokio::main]
 pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     // load data once here before loop
-    app.lineNames = reqwest::get("https://api.tfl.gov.uk/line/mode/tube/status").await
-        .unwrap()
-        .json::<Vec<Line>>()
-        .await
-        .unwrap()
-        .iter()
-        .map(|i| String::from(&i.name))
-        .collect::<Vec<_>>();
+    let result = reqwest::get("https://api.tfl.gov.uk/line/mode/tube/status").await.unwrap().json::<Vec<Line>>().await.unwrap();
+    let names = result.iter().map(|i| String::from(&i.name)).collect::<Vec<_>>();
+    app.lineNames = names;
+    app.lineData = result;
+
     // begin loop
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
@@ -100,6 +100,7 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                         let result = reqwest::get("https://api.tfl.gov.uk/line/mode/tube/status").await.unwrap().json::<Vec<Line>>().await.unwrap();
                         let names = result.iter().map(|i| String::from(&i.name)).collect::<Vec<_>>();
                         app.lineNames = names;
+                        app.lineData = result;
                     }
                     KeyCode::Esc => {
                         app.focus = None;

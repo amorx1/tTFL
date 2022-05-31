@@ -3,7 +3,7 @@ use tui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Span, Spans, Text},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -111,7 +111,7 @@ fn draw_preview<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
         .split(area);
 
     let block = Block::default()
-        .title("Preview")
+        .title("Dashboard")
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::White))
@@ -121,35 +121,70 @@ fn draw_preview<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(4)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+        .margin(2)
+        .constraints([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref())
         .split(area);
 
-    // Top two inner blocks
-    let top_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-        .split(chunks[0]);
+    let mut q = app.lineData.clone();
 
-    // Top left inner block with green background
-    let block = Block::default().title("With borders").borders(Borders::ALL);
-    f.render_widget(block, top_chunks[0]);
+    // create rows
+    let mut rows: Vec<Vec<Rect>> = Vec::new();
+    for i in 0..3 {
+        rows.push(Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref())
+                    .split(chunks[i]));
+    }
 
-    // Top right inner block with styled title aligned to the right
-    let block = Block::default().title("With borders").borders(Borders::ALL);
-    f.render_widget(block, top_chunks[1]);
+    // populate grid
+    for x in 0..3 {
+        for y in 0..3 {
+            let item = q.pop().unwrap();
+            f.render_widget(
+                Block::default().title(item.name)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(
+                    match &item.lineStatuses[0] {
+                        Some(s) => {
+                            if s.statusSeverity != 10 { Color::LightRed }
+                            else { Color::LightGreen }
+                        },
+                        _ => Color::LightGreen
+                    }
+                ))
+            , rows[x][y]);
+            {
+                let chunks = Layout::default()
+                    .margin(1)
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(rows[x][y]);
 
-    // Bottom two inner blocks
-    let bottom_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-        .split(chunks[1]);
+                // let block = Block::default()
+                // .borders(Borders::ALL)
+                // .border_type(BorderType::Rounded);
 
-    // Bottom left block with all default borders
-    let block = Block::default().title("With borders").borders(Borders::ALL);
-    f.render_widget(block, bottom_chunks[0]);
-
-    // Bottom right block with styled left and right border
-    let block = Block::default().title("With borders").borders(Borders::ALL);
-    f.render_widget(block, bottom_chunks[1]);
+                f.render_widget(
+                    Paragraph::new(
+                        match &item.lineStatuses[0] {
+                            Some(s) => {
+                                match &s.reason {
+                                    Some(r) => {r}
+                                    None => {""}
+                                }
+                            }
+                            None => {"No LineStatus"}
+                        }
+                    )
+                    .style(Style::default())
+                    .wrap(Wrap { trim: true })
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                    )
+                , chunks[0])
+            }
+        }
+    }
 }
