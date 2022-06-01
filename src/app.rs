@@ -17,12 +17,14 @@ pub enum Focus {
     LinesBlock
 }
 
-pub enum MainView {
-    Dashboard,
-    Timetable
-}
+// pub enum MainView {
+//     Dashboard,
+//     Timetable
+// }
 
-pub struct App {
+pub struct App<'a> {
+    pub tab_titles: Vec<&'a str>,
+    pub tab_index: usize,
     pub input: String,
     pub input_mode: InputMode,
     pub messages: Vec<String>,
@@ -31,10 +33,43 @@ pub struct App {
     pub focus: Option<Focus>,
     pub line_selected: Option<usize>,
     pub lines_tree_size: Option<usize>,
-    pub main_view: MainView,
+    // pub main_view: MainView,
     pub this_station_name: String,
     pub this_StopPoint: Option<StopPoint>
 }
+
+impl<'a> App<'a> {
+    pub fn new() -> App<'a> {
+        App {
+            tab_titles: vec!["Line Status", "Timetable"],
+            tab_index: 0,
+            input: String::new(),
+            input_mode: InputMode::Normal,
+            messages: Vec::new(),
+            lineNames: Vec::new(),
+            lineData: Vec::new(),
+            focus: None,
+            line_selected: Some(0),
+            lines_tree_size: Some(0),
+            // main_view: MainView::Dashboard,
+            this_station_name: String::new(),
+            this_StopPoint: None,
+        }
+    }
+
+    pub fn next(&mut self) {
+        self.tab_index = (self.tab_index + 1) % self.tab_titles.len();
+    }
+
+    pub fn previous(&mut self) {
+        if self.tab_index > 0 {
+            self.tab_index -= 1;
+        } else {
+            self.tab_index = self.tab_titles.len() - 1;
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LineStatus {
     pub id: i32,
@@ -83,23 +118,23 @@ pub struct StopPointResponse {
     pub matches: Vec<Option<StopPoint>>,
 }
 
-impl Default for App {
-    fn default() -> App {
-        App {
-            input: String::new(),
-            input_mode: InputMode::Normal,
-            messages: Vec::new(),
-            lineNames: Vec::new(),
-            lineData: Vec::new(),
-            focus: None,
-            line_selected: Some(0),
-            lines_tree_size: Some(0),
-            main_view: MainView::Dashboard,
-            this_station_name: String::new(),
-            this_StopPoint: None,
-        }
-    }
-}
+// impl Default for App {
+//     fn default() -> App {
+//         App {
+//             input: String::new(),
+//             input_mode: InputMode::Normal,
+//             messages: Vec::new(),
+//             lineNames: Vec::new(),
+//             lineData: Vec::new(),
+//             focus: None,
+//             line_selected: Some(0),
+//             lines_tree_size: Some(0),
+//             main_view: MainView::Dashboard,
+//             this_station_name: String::new(),
+//             this_StopPoint: None,
+//         }
+//     }
+// }
 
 #[tokio::main]
 pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
@@ -116,16 +151,25 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
         if let Event::Key(key) = event::read()? {
             match app.input_mode {
                 InputMode::Normal => match key.code {
+                    // navigate tabs
+                    KeyCode::Right => app.next(),
+                    KeyCode::Left => app.previous(),
+
+                    //insert mode
                     KeyCode::Char('i') => {
                         app.input_mode = InputMode::Insert;
                         app.focus = Some(Focus::InputBlock);
                     }
-                    KeyCode::Char('l') => {
-                        app.focus = Some(Focus::LinesBlock);
-                    }
+                    // KeyCode::Char('l') => {
+                    //     app.focus = Some(Focus::LinesBlock);
+                    // }
+
+                    // quit app
                     KeyCode::Char('q') => {
                         return Ok(());
                     }
+
+                    // refresh data
                     KeyCode::Char('r') => {
                         // refresh all data here manually
                         let result = reqwest::get("https://api.tfl.gov.uk/line/mode/tube/status").await.unwrap().json::<Vec<Line>>().await.unwrap();
@@ -133,6 +177,8 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                         app.lineNames = names;
                         app.lineData = result;
                     }
+
+                    // leave focus
                     KeyCode::Esc => {
                         app.focus = None;
                     }
