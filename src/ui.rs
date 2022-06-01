@@ -9,7 +9,7 @@ use tui::{
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, Focus, InputMode};
+use crate::app::{App, Focus, InputMode, MainView};
 
 pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     let chunks = Layout::default()
@@ -20,12 +20,12 @@ pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     draw_input(f, app, chunks[0]);
     {
         let chunks = Layout::default()
-            .constraints([Constraint::Percentage(30), Constraint::Percentage(80)].as_ref())
+            .constraints([Constraint::Percentage(100), Constraint::Percentage(100)].as_ref())
             .direction(Direction::Horizontal)
             .split(chunks[1]);
 
-        draw_messages(f, app, chunks[0]);
-        draw_preview(f, app, chunks[1]);
+        // draw_messages(f, app, chunks[0]);
+        draw_preview(f, app, chunks[0]);
     }
 }
 
@@ -80,7 +80,14 @@ fn draw_messages<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
             .direction(Direction::Vertical)
             .split(chunks[0]);
 
-        let items = app.lineNames.iter().map(String::from).map(ListItem::new).collect::<Vec<_>>();
+        let all_item = ListItem::new("All");
+        let mut items = app
+            .lineNames
+            .iter()
+            .map(String::from)
+            .map(ListItem::new)
+            .collect::<Vec<_>>();
+        items.push(all_item);
         app.lines_tree_size = Some(items.len());
 
         let lines = List::new(items)
@@ -104,87 +111,133 @@ fn draw_messages<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
     }
 }
 
-fn draw_preview<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(100)])
-        .split(area);
+fn draw_preview<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
+    match app.main_view {
+        MainView::Dashboard => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(100)])
+                .split(area);
 
-    let block = Block::default()
-        .title("Dashboard")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::White))
-        .border_type(BorderType::Rounded)
-        .style(Style::default());
-    f.render_widget(block, area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(2)
-        .constraints([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref())
-        .split(area);
-
-    let mut q = app.lineData.clone();
-
-    // create rows
-    let mut rows: Vec<Vec<Rect>> = Vec::new();
-    for i in 0..3 {
-        rows.push(Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref())
-                    .split(chunks[i]));
-    }
-
-    // populate grid
-    for x in 0..3 {
-        for y in 0..3 {
-            let item = q.pop().unwrap();
-            f.render_widget(
-                Block::default().title(item.name)
+            let block = Block::default()
+                .title("Dashboard")
+                .title_alignment(Alignment::Center)
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(
-                    match &item.lineStatuses[0] {
-                        Some(s) => {
-                            if s.statusSeverity != 10 { Color::LightRed }
-                            else { Color::LightGreen }
-                        },
-                        _ => Color::LightGreen
-                    }
-                ))
-            , rows[x][y]);
-            {
-                let chunks = Layout::default()
-                    .margin(1)
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(rows[x][y]);
+                .border_style(Style::default().fg(Color::White))
+                .border_type(BorderType::Rounded)
+                .style(Style::default());
+            f.render_widget(block, area);
 
-                // let block = Block::default()
-                // .borders(Borders::ALL)
-                // .border_type(BorderType::Rounded);
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(2)
+                .constraints(
+                    [
+                        Constraint::Percentage(33),
+                        Constraint::Percentage(33),
+                        Constraint::Percentage(33),
+                    ]
+                    .as_ref(),
+                )
+                .split(area);
 
-                f.render_widget(
-                    Paragraph::new(
-                        match &item.lineStatuses[0] {
-                            Some(s) => {
-                                match &s.reason {
-                                    Some(r) => {r}
-                                    None => {""}
-                                }
-                            }
-                            None => {"No LineStatus"}
-                        }
-                    )
-                    .style(Style::default())
-                    .wrap(Wrap { trim: true })
-                    .block(
+            let mut q = app.lineData.clone();
+
+            // create rows
+            let mut rows: Vec<Vec<Rect>> = Vec::new();
+            for i in 0..3 {
+                rows.push(
+                    Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints(
+                            [
+                                Constraint::Percentage(33),
+                                Constraint::Percentage(33),
+                                Constraint::Percentage(33),
+                            ]
+                            .as_ref(),
+                        )
+                        .split(chunks[i]),
+                );
+            }
+
+            // populate grid
+            for x in 0..3 {
+                for y in 0..3 {
+                    let item = q.pop().unwrap();
+                    f.render_widget(
                         Block::default()
+                            .title(item.name)
                             .borders(Borders::ALL)
                             .border_type(BorderType::Rounded)
-                    )
-                , chunks[0])
+                            .border_style(Style::default().fg(match &item.lineStatuses[0] {
+                                Some(s) => {
+                                    if s.statusSeverity != 10 {
+                                        Color::LightRed
+                                    } else {
+                                        Color::LightGreen
+                                    }
+                                }
+                                _ => Color::LightGreen,
+                            })),
+                        rows[x][y],
+                    );
+                    {
+                        let chunks = Layout::default()
+                            .margin(1)
+                            .direction(Direction::Vertical)
+                            .constraints(match &item.lineStatuses[0] {
+                                Some(s) => match &s.reason {
+                                    Some(r) => {
+                                        [Constraint::Percentage(30), Constraint::Percentage(30)]
+                                            .as_ref()
+                                    }
+                                    None => {
+                                        [Constraint::Percentage(15), Constraint::Percentage(15)]
+                                            .as_ref()
+                                    }
+                                },
+                                None => [Constraint::Percentage(15), Constraint::Percentage(15)]
+                                    .as_ref(),
+                            })
+                            .split(rows[x][y]);
+
+                        f.render_widget(
+                            Paragraph::new(match &item.lineStatuses[0] {
+                                Some(s) => match &s.reason {
+                                    Some(r) => r,
+                                    None => "Good Service",
+                                },
+                                None => "No LineStatus",
+                            })
+                            .style(Style::default())
+                            .wrap(Wrap { trim: true })
+                            .block(
+                                Block::default()
+                                    .title("Status")
+                                    .borders(Borders::ALL)
+                                    .border_type(BorderType::Rounded),
+                            ),
+                            chunks[0],
+                        );
+                        // f.render_widget(
+                        //     Paragraph::new(&*thisstop), chunks[1])
+                    }
+                    // {
+                    //     let chunks = Layout::default()
+                    //         .margin(1)
+                    //         .direction(Direction::Vertical)
+                    //         .constraints([Constraint::Percentage(15), Constraint::Percentage(15)].as_ref())
+                    //         .split(rows[x][y]);
+
+                    //     f.render_widget(
+                    //         Paragraph::new(&*app.this_station_code), chunks[0])
+                    // }
+                }
             }
+        },
+        MainView::Timetable => {
+
         }
     }
 }

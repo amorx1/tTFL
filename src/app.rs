@@ -17,6 +17,11 @@ pub enum Focus {
     LinesBlock
 }
 
+pub enum MainView {
+    Dashboard,
+    Timetable
+}
+
 pub struct App {
     pub input: String,
     pub input_mode: InputMode,
@@ -26,6 +31,9 @@ pub struct App {
     pub focus: Option<Focus>,
     pub line_selected: Option<usize>,
     pub lines_tree_size: Option<usize>,
+    pub main_view: MainView,
+    pub this_station_name: String,
+    pub this_StopPoint: Option<StopPoint>
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LineStatus {
@@ -43,6 +51,22 @@ pub struct Disruption {
     summary: String,
     additionalInfo: String,
 }
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StopPoint {
+    pub zone: String,
+    pub id: String,
+    pub name: String
+}
+
+impl Default for StopPoint {
+    fn default() -> StopPoint {
+        StopPoint {
+            zone: String::new(),
+            id: String::new(),
+            name: String::new()
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Line {
@@ -51,8 +75,12 @@ pub struct Line {
     pub modeName: String,
     pub disruptions: Vec<Disruption>,
     pub lineStatuses: Vec<Option<LineStatus>>,
-    // routeSections: Vec<String>,
-    // serviceTypes: Vec<ServiceType>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StopPointResponse {
+    pub query: String,
+    pub total: i32,
+    pub matches: Vec<Option<StopPoint>>,
 }
 
 impl Default for App {
@@ -65,7 +93,10 @@ impl Default for App {
             lineData: Vec::new(),
             focus: None,
             line_selected: Some(0),
-            lines_tree_size: Some(0)
+            lines_tree_size: Some(0),
+            main_view: MainView::Dashboard,
+            this_station_name: String::new(),
+            this_StopPoint: None,
         }
     }
 }
@@ -131,12 +162,20 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                             }
                         }
                         _ => {}
-                    },
+                    }
                     _ => {}
-                },
+                }
                 InputMode::Insert => match key.code {
                     KeyCode::Enter => {
-                        app.messages.push(app.input.drain(..).collect());
+                        app.this_station_name = app.input.drain(..).collect();
+                        let res = reqwest::get(format!("https://api.tfl.gov.uk/StopPoint/Search/{}?modes=tube&includeHubs=false", app.this_station_name)).await.unwrap().json::<StopPointResponse>().await.unwrap();
+                        app.this_StopPoint = match &res.matches.len() {
+                            0 => {None}
+                            1 => {
+                                res.matches[0].clone()
+                            }
+                            _ => {None}
+                        }
                     }
                     KeyCode::Char(c) => {
                         app.input.push(c);
@@ -149,7 +188,7 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                         app.focus = None;
                     }
                     _ => {}
-                },
+                }
             }
         }
     }
