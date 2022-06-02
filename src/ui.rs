@@ -14,7 +14,7 @@ use crate::app::{App, Focus, InputMode};
 pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(2)
+        .margin(1)
         .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
         .split(f.size());
 
@@ -22,30 +22,38 @@ pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
             let (first, rest) = t.split_at(1);
             Spans::from(vec![
                 Span::styled(first, Style::default().fg(Color::Yellow)),
-                Span::styled(rest, Style::default().fg(Color::Green)),
+                Span::styled(rest, Style::default().fg(Color::LightYellow)),
             ])
         })
         .collect();
 
         let tabs = Tabs::new(titles)
-            .block(Block::default().borders(Borders::ALL).title("Tabs"))
+            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).title("Tabs"))
             .select(app.tab_index)
-            .style(Style::default().fg(Color::Cyan))
+            .style(Style::default().fg(Color::White))
             .highlight_style(
                 Style::default()
                     .add_modifier(Modifier::BOLD)
-                    .bg(Color::Black),
+                    .bg(Color::DarkGray),
             );
 
         f.render_widget(tabs, chunks[0]);
 
-        {    
-            let chunks = Layout::default()
-                .margin(0)
-                .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
-                .split(chunks[1]);
+        {
+            if app.tab_index == 1 {
+                let chunks = Layout::default()
+                    .margin(0)
+                    .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+                    .split(chunks[1]);
 
-            draw_input(f, app, chunks[0]);
+                draw_input(f, app, chunks[0]);
+            }
+            else {
+                let chunks = Layout::default()
+                    .margin(0)
+                    .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+                    .split(chunks[0]);
+            }
 
             {
                 let chunks = Layout::default()
@@ -54,15 +62,47 @@ pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
                     .split(chunks[1]);
         
                 // draw_messages(f, app, chunks[0]);
-                draw_preview(f, app, chunks[0]);
+                match app.tab_index {
+                    0 => draw_preview(f, app, chunks[0]),
+                    1 => draw_timetable(f, app, chunks[0]),
+                    _ => unreachable!()
+                }
             }
         }
+}
+
+fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
+    let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(Span::raw("Timetable"));
+
+    match app.this_StopTimetable.arrivals.len() {
+        0 => f.render_widget(block, area),
+        _ => {
+            let items = app.this_StopTimetable.arrivals.iter()
+                .map(|a| String::from(&a.lineId))
+                .map(|i| ListItem::new(i))
+                .collect::<Vec<_>>();
+
+            let lines = List::new(items)
+                .block(
+                    Block::default()
+                    .title("Result")
+                    .title_alignment(Alignment::Center)
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded),
+                );
+            f.render_widget(lines, area)
+        }
+    }
 }
 
 fn draw_input<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
+        .style(Style::default().fg(Color::White))
         .title(Span::raw("Enter station:"));
 
     let (input_normal_mode_message, input_normal_mode_style) = (
@@ -221,11 +261,11 @@ fn draw_preview<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
                                     .as_ref()
                             }
                             None => {
-                                [Constraint::Percentage(15), Constraint::Percentage(15)]
+                                [Constraint::Percentage(20), Constraint::Percentage(20)]
                                     .as_ref()
                             }
                         },
-                        None => [Constraint::Percentage(15), Constraint::Percentage(15)]
+                        None => [Constraint::Percentage(20), Constraint::Percentage(20)]
                             .as_ref(),
                     })
                     .split(rows[x][y]);

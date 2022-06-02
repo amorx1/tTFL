@@ -35,7 +35,8 @@ pub struct App<'a> {
     pub lines_tree_size: Option<usize>,
     // pub main_view: MainView,
     pub this_station_name: String,
-    pub this_StopPoint: Option<StopPoint>
+    pub this_StopPoint: Option<StopPoint>,
+    pub this_StopTimetable: StopTimetable
 }
 
 impl<'a> App<'a> {
@@ -54,6 +55,7 @@ impl<'a> App<'a> {
             // main_view: MainView::Dashboard,
             this_station_name: String::new(),
             this_StopPoint: None,
+            this_StopTimetable: StopTimetable::default(),
         }
     }
 
@@ -90,7 +92,7 @@ pub struct Disruption {
 pub struct StopPoint {
     pub zone: String,
     pub id: String,
-    pub name: String
+    pub name: String,
 }
 
 impl Default for StopPoint {
@@ -98,8 +100,19 @@ impl Default for StopPoint {
         StopPoint {
             zone: String::new(),
             id: String::new(),
-            name: String::new()
+            name: String::new(),
         }
+    }
+}
+
+pub struct StopTimetable {
+    pub stop_point: Option<StopPoint>,
+    pub arrivals: Vec<Arrival>
+}
+
+impl Default for StopTimetable {
+    fn default() -> StopTimetable {
+        StopTimetable { stop_point: None, arrivals: Vec::new() }
     }
 }
 
@@ -116,6 +129,20 @@ pub struct StopPointResponse {
     pub query: String,
     pub total: i32,
     pub matches: Vec<Option<StopPoint>>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ArrivalsResponse {
+    pub arrivals: Vec<Arrival>
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Arrival {
+    pub stationName: String,
+    pub lineId: String,
+    pub platformName: String,
+    pub direction: String,
+    pub destinationName: String,
+    pub timeToStation: i32,
+    pub currentLocation: String
 }
 
 // impl Default for App {
@@ -214,14 +241,29 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                 InputMode::Insert => match key.code {
                     KeyCode::Enter => {
                         app.this_station_name = app.input.drain(..).collect();
-                        let res = reqwest::get(format!("https://api.tfl.gov.uk/StopPoint/Search/{}?modes=tube&includeHubs=false", app.this_station_name)).await.unwrap().json::<StopPointResponse>().await.unwrap();
-                        app.this_StopPoint = match &res.matches.len() {
+
+                        // get stop ID -> stop_point.id
+                        let stop_id_search = reqwest::get(format!("https://api.tfl.gov.uk/StopPoint/Search/{}?modes=tube&includeHubs=false", app.this_station_name))
+                            .await
+                            .unwrap()
+                            .json::<StopPointResponse>()
+                            .await
+                            .unwrap();
+                        app.this_StopTimetable.stop_point = match &stop_id_search.matches.len() {
                             0 => {None}
                             1 => {
-                                res.matches[0].clone()
+                                stop_id_search.matches[0].clone()
                             }
                             _ => {None}
-                        }
+                        };
+
+                        // use id to fetch arrivals
+                        app.this_StopTimetable.arrivals = reqwest::get(format!("https://api.tfl.gov.uk/StopPoint/{}/Arrivals?mode=tube", app.this_StopTimetable.stop_point.as_ref().unwrap().id))
+                            .await
+                            .unwrap()
+                            .json::<Vec<Arrival>>()
+                            .await
+                            .unwrap();
                     }
                     KeyCode::Char(c) => {
                         app.input.push(c);
