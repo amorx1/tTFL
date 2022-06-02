@@ -18,7 +18,7 @@ fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app = App::default();
+    let app = App::new();
     let res = run_app(&mut terminal, app)?;
 
     disable_raw_mode()?;
