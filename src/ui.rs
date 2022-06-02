@@ -12,12 +12,15 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{App, Focus, InputMode};
 
 pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
+
+    // split into tab row / rest
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
         .split(f.size());
 
+        // get tab names
         let titles = app.tab_titles.iter().map(|t| {
             let (first, rest) = t.split_at(1);
             Spans::from(vec![
@@ -27,6 +30,7 @@ pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
         })
         .collect();
 
+        // create and render tabs
         let tabs = Tabs::new(titles)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).title("Tabs"))
             .select(app.tab_index)
@@ -36,38 +40,47 @@ pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
                     .add_modifier(Modifier::BOLD)
                     .bg(Color::DarkGray),
             );
-
         f.render_widget(tabs, chunks[0]);
 
-        {
-            if app.tab_index == 1 {
-                let chunks = Layout::default()
-                    .margin(0)
-                    .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
-                    .split(chunks[1]);
+        // check current tab
+        match app.tab_index {
 
-                draw_input(f, app, chunks[0]);
-            }
-            else {
-                let chunks = Layout::default()
-                    .margin(0)
-                    .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
-                    .split(chunks[0]);
-            }
+            // Status
+            0 => {
+                {
+                    // render dashboard in remaining frame (no need to split unless another block is added) 
+                    // let chunks = Layout::default()
+                    //     .margin(0)
+                    //     .constraints([Constraint::Length(100), Constraint::Min(100)].as_ref())
+                    //     .split(chunks[1]);
 
-            {
-                let chunks = Layout::default()
-                    .constraints([Constraint::Percentage(100), Constraint::Percentage(100)].as_ref())
-                    .direction(Direction::Horizontal)
-                    .split(chunks[1]);
-        
-                // draw_messages(f, app, chunks[0]);
-                match app.tab_index {
-                    0 => draw_preview(f, app, chunks[0]),
-                    1 => draw_timetable(f, app, chunks[0]),
-                    _ => unreachable!()
+                    draw_dashboard(f, app, chunks[1]);
                 }
-            }
+            },
+
+            // Timetable
+            1 => {
+                {
+                    // split remaining frame into input and timetable
+                    let chunks = Layout::default()
+                        .margin(0)
+                        .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+                        .split(chunks[1]);
+                    
+                    // render input in first split
+                    draw_input(f, app, chunks[0]);
+                    {
+                        // render timetable in remaining frame (no need to split unless another block is added)
+                        // let chunks = Layout::default()
+                        //     .constraints([Constraint::Percentage(100), Constraint::Percentage(100)].as_ref())
+                        //     .direction(Direction::Horizontal)
+                        //     .split(chunks[1]);
+                
+                        draw_timetable(f, app, chunks[1]);
+                    }
+                }
+            },
+            _ => unreachable!()
         }
 }
 
@@ -80,20 +93,48 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
     match app.this_StopTimetable.arrivals.len() {
         0 => f.render_widget(block, area),
         _ => {
-            let items = app.this_StopTimetable.arrivals.iter()
-                .map(|a| String::from(&a.lineId))
-                .map(|i| ListItem::new(i))
-                .collect::<Vec<_>>();
+                // let items = app.this_StopTimetable.unique_lines.iter()
+                //     .map(|a| String::from(a))
+                //     .map(|i| ListItem::new(i))
+                //     .collect::<Vec<_>>();
 
-            let lines = List::new(items)
-                .block(
-                    Block::default()
-                    .title("Result")
-                    .title_alignment(Alignment::Center)
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded),
-                );
-            f.render_widget(lines, area)
+                // this is just a list of the unique lines
+                // let lines = List::new(items)
+                //     .block(
+                //         Block::default()
+                //         .title("Result")
+                //         .title_alignment(Alignment::Center)
+                //         .borders(Borders::ALL)
+                //         .border_type(BorderType::Rounded),
+                //     );
+                // f.render_widget(lines, area)
+
+                let constraints = match app.this_StopTimetable.unique_lines.len() {
+                    0 => [Constraint::Percentage(0)].as_ref(),
+                    1 => [Constraint::Percentage(100)].as_ref(),
+                    2 => [Constraint::Percentage(50), Constraint::Percentage(50)].as_ref(),
+                    3 => [Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref(),
+                    4 => [Constraint::Percentage(25), Constraint::Percentage(25), Constraint::Percentage(25), Constraint::Percentage(25)].as_ref(),
+                    5 => [Constraint::Percentage(20), Constraint::Percentage(20), Constraint::Percentage(20), Constraint::Percentage(20), Constraint::Percentage(20)].as_ref(),
+                    _ => [Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref()
+                };
+
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(constraints)
+                    .split(area);
+
+                let mut row_count = 0;
+                for line in &app.this_StopTimetable.unique_lines {
+                    f.render_widget(Block::default()
+                            .title(line.clone())
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(Color::LightYellow))
+                        ,rows[row_count]
+                    );
+                    row_count += 1;
+                }
         }
     }
 }
@@ -181,12 +222,7 @@ fn draw_messages<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
     }
 }
 
-fn draw_preview<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(100)])
-        .split(area);
-
+fn draw_dashboard<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
     let block = Block::default()
         .title("Dashboard")
         .title_alignment(Alignment::Center)
@@ -288,20 +324,7 @@ fn draw_preview<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
                     ),
                     chunks[0],
                 );
-                // f.render_widget(
-                //     Paragraph::new(&*thisstop), chunks[1])
             }
-            // {
-            //     let chunks = Layout::default()
-            //         .margin(1)
-            //         .direction(Direction::Vertical)
-            //         .constraints([Constraint::Percentage(15), Constraint::Percentage(15)].as_ref())
-            //         .split(rows[x][y]);
-
-            //     f.render_widget(
-            //         Paragraph::new(&*app.this_station_code), chunks[0])
-            // }
         }
     }
 }
-
