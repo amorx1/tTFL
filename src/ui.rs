@@ -6,10 +6,9 @@ use tui::{
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap, Tabs},
     Frame,
 };
-
+use chrono::{DateTime, FixedOffset, TimeZone};
 use unicode_width::UnicodeWidthStr;
-
-use crate::app::{App, Focus, InputMode};
+use crate::app::{App, Focus, InputMode, Arrival};
 
 pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
 
@@ -85,30 +84,34 @@ pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
 }
 
 fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
+    let station = match &app.this_StopTimetable.stop_point {
+        Some(s) => format!("for {}", s.name),
+        None => "".to_string()
+    };
+
     let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title(Span::raw("Timetable"));
+            .title(Span::raw(format!("Timetable {}", station)));
 
     match app.this_StopTimetable.arrivals.len() {
         0 => f.render_widget(block, area),
         _ => {
-                // let items = app.this_StopTimetable.unique_lines.iter()
-                //     .map(|a| String::from(a))
-                //     .map(|i| ListItem::new(i))
-                //     .collect::<Vec<_>>();
+                // 
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(100)].as_ref())
+                    .split(area);
+                f.render_widget(block, chunks[0]);
 
-                // this is just a list of the unique lines
-                // let lines = List::new(items)
-                //     .block(
-                //         Block::default()
-                //         .title("Result")
-                //         .title_alignment(Alignment::Center)
-                //         .borders(Borders::ALL)
-                //         .border_type(BorderType::Rounded),
-                //     );
-                // f.render_widget(lines, area)
+                // 
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints([Constraint::Percentage(100)].as_ref())
+                    .split(chunks[0]);
 
+                //
                 let constraints = match app.this_StopTimetable.unique_lines.len() {
                     0 => [Constraint::Percentage(0)].as_ref(),
                     1 => [Constraint::Percentage(100)].as_ref(),
@@ -119,10 +122,11 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                     _ => [Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref()
                 };
 
+                // split into Line rows
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints(constraints)
-                    .split(area);
+                    .split(chunks[0]);
 
                 let mut row_count = 0;
                 for line in &app.this_StopTimetable.unique_lines {
@@ -130,9 +134,119 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                             .title(line.clone())
                             .borders(Borders::ALL)
                             .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(Color::LightYellow))
+                            .border_style(Style::default().fg(Color::LightRed))
                         ,rows[row_count]
                     );
+
+                    // Inside each line
+                    {
+                        // split into left and right
+                        let chunks = Layout::default()
+                            .margin(1)
+                            .direction(Direction::Horizontal)
+                            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                            .split(rows[row_count]);
+
+                        {
+                            let num_platforms = app.this_StopTimetable.unique_platforms[&line.clone()].len();
+                            let constraints = match num_platforms {
+                                0 => [Constraint::Percentage(0)].as_ref(),
+                                1 => [Constraint::Percentage(100)].as_ref(),
+                                2 => [Constraint::Percentage(50), Constraint::Percentage(50)].as_ref(),
+                                3 => [Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref(),
+                                4 => [Constraint::Percentage(25), Constraint::Percentage(25), Constraint::Percentage(25), Constraint::Percentage(25)].as_ref(),
+                                5 => [Constraint::Percentage(20), Constraint::Percentage(20), Constraint::Percentage(20), Constraint::Percentage(20), Constraint::Percentage(20)].as_ref(),
+                                _ => [Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)].as_ref()
+                            };
+
+                            let cols = Layout::default()
+                                .direction(Direction::Horizontal)
+                                .constraints(constraints)
+                                .split(chunks[0]);
+
+                            let mut col_count = 0;
+                            for platform in &app.this_StopTimetable.unique_platforms[&line.clone()] {
+                                f.render_widget(Block::default()
+                                    .title(platform.clone())
+                                    .borders(Borders::ALL)
+                                    .border_type(BorderType::Rounded)
+                                    .border_style(Style::default().fg(Color::LightYellow))
+                                ,cols[col_count]);
+
+                                {
+                                    let chunks = Layout::default()
+                                        .margin(1)
+                                        .direction(Direction::Horizontal)
+                                        .constraints([Constraint::Percentage(100)].as_ref())
+                                        .split(cols[col_count]);
+
+                                    let mut items = app.this_StopTimetable.arrivals
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, a)| a.lineId == line.clone() && a.platformName == platform.clone())
+                                        .map(|(_, e)| format!("{} ---- {}", e.timeToStation.clone(), e.currentLocation))
+                                        .collect::<Vec<_>>();
+
+                                    items.sort();
+                                    let items = items
+                                        .iter()
+                                        .map(|a| ListItem::new(a.to_string()))
+                                        .collect::<Vec<_>>();
+
+                                    if items.len() == 0 {
+                                        f.render_widget(
+                                            Block::default()
+                                            .title("")
+                                            .title_alignment(Alignment::Center)
+                                            .borders(Borders::TOP)
+                                            .border_style(Style::default().fg(Color::LightYellow))
+                                            .border_type(BorderType::Rounded),
+                                             chunks[0])
+                                    }
+                                    else {
+                                        let lines = List::new(items)
+                                        .block(
+                                            Block::default()
+                                            .title("")
+                                            .title_alignment(Alignment::Center)
+                                            .borders(Borders::TOP)
+                                            .border_style(Style::default().fg(Color::LightYellow))
+                                            .border_type(BorderType::Rounded),
+                                        );
+                                        f.render_widget(lines, chunks[0]);
+                                    }
+                                }
+                                col_count += 1;
+                            };
+                        }
+                        // let mut current_locations: Vec<String> = Vec::new();
+                        // // filter indices - currently only by line, can add line-platform
+                        // let line_indices = app.this_StopTimetable.arrivals.iter().map(|a| a.lineId == line.clone()).collect::<Vec<_>>();
+                        // for i in 0..line_indices.len() {
+                        //     if line_indices[i] == true {
+                        //           current_locations.push(app.this_StopTimetable.arrivals[i].currentLocation.clone())
+                        //     }
+                        // }
+                        // let current_locations_items = current_locations.iter()
+                        //     .map(|a| String::from(a))
+                        //     .map(|i| ListItem::new(i))
+                        //     .collect::<Vec<_>>();
+
+                        // let lines = List::new(current_locations_items)
+                        //     .block(
+                        //         Block::default()
+                        //         .title("Current Location")
+                        //         .title_alignment(Alignment::Center)
+                        //         .borders(Borders::ALL)
+                        //         .border_style(Style::default().fg(Color::LightCyan))
+                        //         .border_type(BorderType::Rounded),
+                        //     );
+                        // // render left widget: Schedule
+                        // f.render_widget(lines, chunks[0])
+
+                        // right widget: Live Tracker
+                    }
+
                     row_count += 1;
                 }
         }
@@ -327,4 +441,8 @@ fn draw_dashboard<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
             }
         }
     }
+}
+
+fn convert_datetime() {
+
 }

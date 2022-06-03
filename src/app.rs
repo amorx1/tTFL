@@ -1,4 +1,5 @@
-use std::{io, collections::{HashMap, HashSet}};
+use std::{io, collections::{HashMap, HashSet, BTreeMap}};
+use chrono::DateTime;
 
 use crossterm::event::{self, Event, KeyCode};
 use serde_derive::{Serialize, Deserialize};
@@ -11,34 +12,23 @@ pub enum InputMode {
     Normal,
     Insert,
 }
-
 pub enum Focus {
     InputBlock,
     LinesBlock
 }
-
-// pub enum MainView {
-//     Dashboard,
-//     Timetable
-// }
-
 pub struct App<'a> {
     pub tab_titles: Vec<&'a str>,
     pub tab_index: usize,
     pub input: String,
     pub input_mode: InputMode,
-    pub messages: Vec<String>,
     pub lineNames: Vec<String>,
     pub lineData: Vec<Line>,
     pub focus: Option<Focus>,
     pub line_selected: Option<usize>,
     pub lines_tree_size: Option<usize>,
-    // pub main_view: MainView,
     pub this_station_name: String,
-    pub this_StopPoint: Option<StopPoint>,
     pub this_StopTimetable: StopTimetable
 }
-
 impl<'a> App<'a> {
     pub fn new() -> App<'a> {
         App {
@@ -46,22 +36,18 @@ impl<'a> App<'a> {
             tab_index: 0,
             input: String::new(),
             input_mode: InputMode::Normal,
-            messages: Vec::new(),
             lineNames: Vec::new(),
             lineData: Vec::new(),
             focus: None,
             line_selected: Some(0),
             lines_tree_size: Some(0),
             this_station_name: String::new(),
-            this_StopPoint: None,
             this_StopTimetable: StopTimetable::default(),
         }
     }
-
     pub fn next(&mut self) {
         self.tab_index = (self.tab_index + 1) % self.tab_titles.len();
     }
-
     pub fn previous(&mut self) {
         if self.tab_index > 0 {
             self.tab_index -= 1;
@@ -78,7 +64,6 @@ pub struct LineStatus {
     pub statusSeverityDescription: String,
     pub reason: Option<String>
 }
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Disruption {
     category: String,
@@ -93,7 +78,6 @@ pub struct StopPoint {
     pub id: String,
     pub name: String,
 }
-
 impl Default for StopPoint {
     fn default() -> StopPoint {
         StopPoint {
@@ -103,19 +87,17 @@ impl Default for StopPoint {
         }
     }
 }
-
 pub struct StopTimetable {
     pub stop_point: Option<StopPoint>,
     pub unique_lines: HashSet<String>,
+    pub unique_platforms: HashMap<String, Vec<String>>,
     pub arrivals: Vec<Arrival>
 }
-
 impl Default for StopTimetable {
     fn default() -> StopTimetable {
-        StopTimetable { stop_point: None, unique_lines: HashSet::new(), arrivals: Vec::new() }
+        StopTimetable { stop_point: None, unique_lines: HashSet::new(), unique_platforms: HashMap::new(), arrivals: Vec::new() }
     }
 }
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Line {
     pub id: String,
@@ -142,7 +124,9 @@ pub struct Arrival {
     pub direction: String,
     pub destinationName: String,
     pub timeToStation: i32,
-    pub currentLocation: String
+    pub currentLocation: String,
+    pub expectedArrival: String,
+    pub towards: String
 }
 
 #[tokio::main]
@@ -242,9 +226,37 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                             .await
                             .unwrap_or_default();
 
-                        for line in &app.this_StopTimetable.arrivals {
-                            app.this_StopTimetable.unique_lines.insert(line.lineId.clone());
+                        for arrival in &app.this_StopTimetable.arrivals {
+                            app.this_StopTimetable.unique_lines.insert(arrival.lineId.clone());
                         }
+
+                        for u_line in &app.this_StopTimetable.unique_lines {
+                            let mut platforms_for_this_line = app.this_StopTimetable.arrivals
+                                .iter()
+                                .enumerate()
+                                .filter(|&(_,i)| i.lineId == u_line.clone())
+                                .map(|(_,e)| e.platformName.clone())
+                                .collect::<Vec<String>>();
+
+                            let mut map: BTreeMap<String, _> = BTreeMap::new();
+                            for platform in platforms_for_this_line {
+                                map.entry(platform.clone()).or_insert(platform);
+                            }
+
+                            let mut things: Vec<String> = Vec::new();
+                            for (platform, _) in &map {
+                                things.push(platform.clone());
+                            }
+
+                            // let set: HashSet<_> = platforms_for_this_line.drain(..).collect();
+
+                            // this is platform names for reach line
+                            // platforms_for_this_line.extend(set.into_iter());
+
+                            // dict: {line : Vec<platform_names>}
+                            app.this_StopTimetable.unique_platforms.insert(u_line.to_string(), things);
+                        }
+
                     }
                     KeyCode::Char(c) => {
                         app.input.push(c);
