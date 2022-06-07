@@ -1,44 +1,39 @@
-use std::{io, collections::{HashMap, HashSet}};
+use std::{io, collections::{HashMap, HashSet, BTreeMap, LinkedList}};
+use chrono::DateTime;
+use rust_bert::pipelines::ner::NERModel;
 
 use crossterm::event::{self, Event, KeyCode};
 use serde_derive::{Serialize, Deserialize};
-use tui::{backend::Backend, Terminal};
+use tui::{backend::Backend, Terminal, widgets::canvas::Rectangle, style::Color};
 use reqwest::{self, Client};
 
 use crate::ui::ui;
 
+trait WithStationName {
+    fn new(stop_name: String) -> Self;
+}
 pub enum InputMode {
     Normal,
     Insert,
 }
-
 pub enum Focus {
     InputBlock,
     LinesBlock
 }
-
-// pub enum MainView {
-//     Dashboard,
-//     Timetable
-// }
-
 pub struct App<'a> {
     pub tab_titles: Vec<&'a str>,
     pub tab_index: usize,
     pub input: String,
     pub input_mode: InputMode,
-    pub messages: Vec<String>,
     pub lineNames: Vec<String>,
     pub lineData: Vec<Line>,
     pub focus: Option<Focus>,
     pub line_selected: Option<usize>,
     pub lines_tree_size: Option<usize>,
-    // pub main_view: MainView,
     pub this_station_name: String,
-    pub this_StopPoint: Option<StopPoint>,
-    pub this_StopTimetable: StopTimetable
+    pub this_StopTimetable: StopTimetable,
+    pub station_nodes: BTreeMap<String, Vec<Vec<StationNode>>>
 }
-
 impl<'a> App<'a> {
     pub fn new() -> App<'a> {
         App {
@@ -46,22 +41,19 @@ impl<'a> App<'a> {
             tab_index: 0,
             input: String::new(),
             input_mode: InputMode::Normal,
-            messages: Vec::new(),
             lineNames: Vec::new(),
             lineData: Vec::new(),
             focus: None,
             line_selected: Some(0),
             lines_tree_size: Some(0),
             this_station_name: String::new(),
-            this_StopPoint: None,
             this_StopTimetable: StopTimetable::default(),
+            station_nodes: BTreeMap::new(),
         }
     }
-
     pub fn next(&mut self) {
         self.tab_index = (self.tab_index + 1) % self.tab_titles.len();
     }
-
     pub fn previous(&mut self) {
         if self.tab_index > 0 {
             self.tab_index -= 1;
@@ -78,7 +70,6 @@ pub struct LineStatus {
     pub statusSeverityDescription: String,
     pub reason: Option<String>
 }
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Disruption {
     category: String,
@@ -93,7 +84,6 @@ pub struct StopPoint {
     pub id: String,
     pub name: String,
 }
-
 impl Default for StopPoint {
     fn default() -> StopPoint {
         StopPoint {
@@ -103,19 +93,18 @@ impl Default for StopPoint {
         }
     }
 }
-
 pub struct StopTimetable {
     pub stop_point: Option<StopPoint>,
     pub unique_lines: HashSet<String>,
-    pub arrivals: Vec<Arrival>
+    pub unique_platforms: HashMap<String, Vec<String>>,
+    pub arrivals: Vec<Arrival>,
+    pub live_maps: BTreeMap<String, LiveMap>
 }
-
 impl Default for StopTimetable {
     fn default() -> StopTimetable {
-        StopTimetable { stop_point: None, unique_lines: HashSet::new(), arrivals: Vec::new() }
+        StopTimetable { stop_point: None, unique_lines: HashSet::new(), unique_platforms: HashMap::new(), arrivals: Vec::new(), live_maps: BTreeMap::new() }
     }
 }
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Line {
     pub id: String,
@@ -142,11 +131,51 @@ pub struct Arrival {
     pub direction: String,
     pub destinationName: String,
     pub timeToStation: i32,
-    pub currentLocation: String
+    pub currentLocation: String,
+    pub expectedArrival: String,
+    pub towards: String
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RouteResponse {
+    pub lineId: String,
+    pub direction: String,
+    pub orderedLineRoutes: Vec<Route>
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Route {
+    pub name: String,
+    pub naptanIds: Vec<String>
+}
+pub struct Station {
+    pub naptan_id: String,
+}
+impl WithStationName for Station {
+    fn new(stop_name: String) -> Self {
+        Station { naptan_id: stop_name }
+    }
+}
+pub struct Link {
+    pub link_name: String,
+    pub is_current: bool
+}
+pub struct LiveMap {
+    pub stops_0: Vec<Station>,
+    // pub links: LinkedList<Link>,
+    pub stops_1: Vec<Station>,
+    pub trains_currently_at: Vec<String>
+}
+impl Default for LiveMap {
+    fn default() -> LiveMap {
+        LiveMap { stops_0: Vec::new(), stops_1: Vec::new(), trains_currently_at: Vec::new() }
+    }
+}
+pub struct StationNode {
+    pub naptan_id: String,
+    pub rect: Rectangle,
 }
 
 #[tokio::main]
-pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, ai_model: &NERModel) -> io::Result<()> {
     // load data once here before loop
     let result = reqwest::get("https://api.tfl.gov.uk/line/mode/tube/status").await.unwrap().json::<Vec<Line>>().await.unwrap();
     let names = result.iter().map(|i| String::from(&i.name)).collect::<Vec<_>>();
@@ -242,8 +271,101 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                             .await
                             .unwrap_or_default();
 
-                        for line in &app.this_StopTimetable.arrivals {
-                            app.this_StopTimetable.unique_lines.insert(line.lineId.clone());
+                        for arrival in &app.this_StopTimetable.arrivals {
+                            app.this_StopTimetable.unique_lines.insert(arrival.lineId.clone());
+                        }
+
+                        // over all lines in this station
+                        for u_line in &app.this_StopTimetable.unique_lines {
+                            let platforms_for_this_line = app.this_StopTimetable.arrivals
+                                .iter()
+                                .enumerate()
+                                .filter(|&(_,i)| i.lineId == u_line.clone())
+                                .map(|(_,e)| e.platformName.clone())
+                                .collect::<Vec<String>>();
+
+                            // sort platforms by line
+                            let mut map: BTreeMap<String, _> = BTreeMap::new();
+                            for platform in platforms_for_this_line {
+                                map.entry(platform.clone()).or_insert(platform);
+                            }
+                            let mut platforms: Vec<String> = Vec::new();
+                            for (platform, _) in &map {
+                                platforms.push(platform.clone());
+                            }
+                            // { key: line(String), value: platform(String) }
+                            app.this_StopTimetable.unique_platforms.insert(u_line.to_string(), platforms);
+                        }
+                        
+                        // fetch all stops and push to live_maps
+                        for line in &app.this_StopTimetable.unique_lines {
+                            let res =reqwest::get(format!("https://api.tfl.gov.uk/Line/{}/Route/Sequence/all", line))
+                                .await
+                                .unwrap()
+                                .json::<RouteResponse>()
+                                .await
+                                .unwrap();
+                                
+                            app.this_StopTimetable.live_maps.insert(line.to_string(), LiveMap { 
+                                stops_0: res.orderedLineRoutes[0].naptanIds
+                                        .iter()
+                                        .map(|s| Station::new(s.to_string()))
+                                        .collect::<Vec<Station>>(),
+                                stops_1: res.orderedLineRoutes[1].naptanIds
+                                        .iter()
+                                        .map(|s| Station::new(s.to_string()))
+                                        .collect::<Vec<Station>>(),
+                                trains_currently_at: Vec::new()
+                                }
+                            );
+                        }
+
+                        
+
+                        // create nodes
+                        for line in &app.this_StopTimetable.unique_lines {
+                            let mut x_0 = 12.5;
+                            let y = 50.0;
+                            let mut x_1 = 12.5;
+                            let mut rects_0: Vec<StationNode> = Vec::new();
+                            let mut rects_1: Vec<StationNode> = Vec::new();
+                            for stop in &app.this_StopTimetable.live_maps[line].stops_0 {
+                                rects_0.push(
+                                    StationNode { 
+                                        naptan_id: stop.naptan_id.clone(),
+                                        rect: Rectangle {
+                                            x:x_0,
+                                            y:y,
+                                            width:2.0,
+                                            height:10.0,
+                                            color: match &stop.naptan_id == &app.this_StopTimetable.stop_point.clone().unwrap().id {
+                                                true => Color::LightGreen,
+                                                false => Color::LightYellow
+                                            }
+                                        },
+                                    }
+                                );
+                                x_0 += 3.5;
+                            }
+                            for stop in &app.this_StopTimetable.live_maps[line].stops_1 {
+                                rects_1.push(
+                                    StationNode { 
+                                        naptan_id: stop.naptan_id.clone(),
+                                        rect: Rectangle {
+                                            x:x_1,
+                                            y:y,
+                                            width:2.0,
+                                            height:10.0,
+                                            color: match &stop.naptan_id == &app.this_StopTimetable.stop_point.clone().unwrap().id {
+                                                true => Color::LightGreen,
+                                                false => Color::LightYellow
+                                            }
+                                        },
+                                    }
+                                );
+                                x_1 += 3.5;
+                            }
+                            app.station_nodes.insert(line.to_string(), vec!(rects_0, rects_1));
                         }
                     }
                     KeyCode::Char(c) => {
