@@ -3,8 +3,8 @@ use tui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Span, Spans, Text},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap, Tabs},
-    Frame,
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap, Tabs, canvas::Canvas},
+    Frame, symbols,
 };
 use chrono::{DateTime, FixedOffset, TimeZone};
 use unicode_width::UnicodeWidthStr;
@@ -144,7 +144,7 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                         let chunks = Layout::default()
                             .margin(1)
                             .direction(Direction::Horizontal)
-                            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                            .constraints([Constraint::Percentage(33), Constraint::Percentage(67)].as_ref())
                             .split(rows[row_count]);
 
                         {
@@ -184,27 +184,16 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                                         .iter()
                                         .enumerate()
                                         .filter(|(_, a)| a.lineId == line.clone() && a.platformName == platform.clone())
-                                        .map(|(_, e)| format!("{} ---- {}", e.timeToStation.clone(), e.currentLocation))
+                                        .map(|(_, e)| format!("{} ---- {}", &e.timeToStation, &e.currentLocation))
                                         .collect::<Vec<_>>();
-
                                     items.sort();
+
                                     let items = items
                                         .iter()
                                         .map(|a| ListItem::new(a.to_string()))
                                         .collect::<Vec<_>>();
 
-                                    if items.len() == 0 {
-                                        f.render_widget(
-                                            Block::default()
-                                            .title("")
-                                            .title_alignment(Alignment::Center)
-                                            .borders(Borders::TOP)
-                                            .border_style(Style::default().fg(Color::LightYellow))
-                                            .border_type(BorderType::Rounded),
-                                             chunks[0])
-                                    }
-                                    else {
-                                        let lines = List::new(items)
+                                    let lines = List::new(items)
                                         .block(
                                             Block::default()
                                             .title("")
@@ -213,40 +202,67 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                                             .border_style(Style::default().fg(Color::LightYellow))
                                             .border_type(BorderType::Rounded),
                                         );
-                                        f.render_widget(lines, chunks[0]);
-                                    }
+                                    f.render_widget(lines, chunks[0]);
                                 }
                                 col_count += 1;
                             };
                         }
-                        // let mut current_locations: Vec<String> = Vec::new();
-                        // // filter indices - currently only by line, can add line-platform
-                        // let line_indices = app.this_StopTimetable.arrivals.iter().map(|a| a.lineId == line.clone()).collect::<Vec<_>>();
-                        // for i in 0..line_indices.len() {
-                        //     if line_indices[i] == true {
-                        //           current_locations.push(app.this_StopTimetable.arrivals[i].currentLocation.clone())
-                        //     }
-                        // }
-                        // let current_locations_items = current_locations.iter()
-                        //     .map(|a| String::from(a))
-                        //     .map(|i| ListItem::new(i))
-                        //     .collect::<Vec<_>>();
-
-                        // let lines = List::new(current_locations_items)
-                        //     .block(
-                        //         Block::default()
-                        //         .title("Current Location")
-                        //         .title_alignment(Alignment::Center)
-                        //         .borders(Borders::ALL)
-                        //         .border_style(Style::default().fg(Color::LightCyan))
-                        //         .border_type(BorderType::Rounded),
-                        //     );
-                        // // render left widget: Schedule
-                        // f.render_widget(lines, chunks[0])
 
                         // right widget: Live Tracker
-                    }
+                        // let this_stops_route_0 = app.this_StopTimetable.live_maps[&line.clone()].stops
+                        //     .iter()
+                        //     .map(|station|ListItem::new(String::from(&station.stop_name)))
+                        //     .collect::<Vec<_>>();
+                        // let all_stops = List::new(this_stops_route_0)
+                        //     .block(
+                        //         Block::default()
+                        //         .title("All stop on this line")
+                        //         .title_alignment(Alignment::Center)
+                        //         .borders(Borders::TOP)
+                        //         .border_style(Style::default().fg(Color::LightCyan))
+                        //         .border_type(BorderType::Rounded),
+                        // );
+                        // f.render_widget(all_stops, chunks[1]);
+                        {
+                            let rows = Layout::default()
+                                .direction(Direction::Vertical)
+                                .constraints([Constraint::Percentage(25), Constraint::Percentage(25), Constraint::Percentage(25), Constraint::Percentage(25)].as_ref())
+                                .split(chunks[1]);
 
+                            // top row
+                            // middle row
+                            let canvas =  Canvas::default()
+                                .block(
+                                    Block::default()
+                                )
+                                .paint(|ctx| {
+                                    for station_node in &app.station_nodes[line][0] {
+                                        ctx.draw(&station_node.rect);
+                                    }
+                                })
+                                .marker(symbols::Marker::Braille)
+                                .x_bounds([10.0, 110.0])
+                                .y_bounds([10.0, 110.0]);
+
+                            f.render_widget(canvas, rows[1]);
+
+                            let canvas =  Canvas::default()
+                                .block(
+                                    Block::default()
+                                )
+                                .paint(|ctx| {
+                                    for station_node in &app.station_nodes[line][1] {
+                                        ctx.draw(&station_node.rect);
+                                    }
+                                })
+                                .marker(symbols::Marker::Braille)
+                                .x_bounds([10.0, 110.0])
+                                .y_bounds([10.0, 110.0]);
+
+                            f.render_widget(canvas, rows[2]);
+                            // bottom row
+                        }
+                    }
                     row_count += 1;
                 }
         }
@@ -441,8 +457,4 @@ fn draw_dashboard<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
             }
         }
     }
-}
-
-fn convert_datetime() {
-
 }
