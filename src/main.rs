@@ -7,21 +7,21 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use rust_bert::pipelines::ner::NERModel;
+// use rust_bert::pipelines::ner::NERModel;
 
 use std::io;
 use tui::{backend::CrosstermBackend, Terminal};
 
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
-    let ai_model = NERModel::new(Default::default()).unwrap();
+    // let ai_model = NERModel::new(Default::default()).unwrap();
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let app = App::new();
-    let res = run_app(&mut terminal, app, &ai_model)?;
+    let res = run_app(&mut terminal, app)?;
 
     disable_raw_mode()?;
     execute!(

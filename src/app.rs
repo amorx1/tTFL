@@ -1,6 +1,6 @@
 use std::{io, collections::{HashMap, HashSet, BTreeMap, LinkedList}};
 use chrono::DateTime;
-use rust_bert::pipelines::ner::NERModel;
+// use rust_bert::pipelines::ner::NERModel;
 
 use crossterm::event::{self, Event, KeyCode};
 use serde_derive::{Serialize, Deserialize};
@@ -32,7 +32,9 @@ pub struct App<'a> {
     pub lines_tree_size: Option<usize>,
     pub this_station_name: String,
     pub this_StopTimetable: StopTimetable,
-    pub station_nodes: BTreeMap<String, Vec<Vec<StationNode>>>
+    pub api_client: Option<Client>,
+    pub line_cache: BTreeMap<String, Vec<String>>,
+    pub stop_cache: BTreeMap<String, StopTimetable>,
 }
 impl<'a> App<'a> {
     pub fn new() -> App<'a> {
@@ -48,7 +50,9 @@ impl<'a> App<'a> {
             lines_tree_size: Some(0),
             this_station_name: String::new(),
             this_StopTimetable: StopTimetable::default(),
-            station_nodes: BTreeMap::new(),
+            api_client: None,
+            line_cache: BTreeMap::new(),
+            stop_cache: BTreeMap::new()
         }
     }
     pub fn next(&mut self) {
@@ -93,16 +97,18 @@ impl Default for StopPoint {
         }
     }
 }
+#[derive(Clone)]
 pub struct StopTimetable {
     pub stop_point: Option<StopPoint>,
     pub unique_lines: HashSet<String>,
     pub unique_platforms: HashMap<String, Vec<String>>,
     pub arrivals: Vec<Arrival>,
-    pub live_maps: BTreeMap<String, LiveMap>
+    pub live_maps: BTreeMap<String, LiveMap>,
+    pub station_nodes: BTreeMap<String, Vec<Vec<StationNode>>>,
 }
 impl Default for StopTimetable {
     fn default() -> StopTimetable {
-        StopTimetable { stop_point: None, unique_lines: HashSet::new(), unique_platforms: HashMap::new(), arrivals: Vec::new(), live_maps: BTreeMap::new() }
+        StopTimetable { stop_point: None, unique_lines: HashSet::new(), unique_platforms: HashMap::new(), arrivals: Vec::new(), live_maps: BTreeMap::new(), station_nodes: BTreeMap::new() }
     }
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -128,8 +134,8 @@ pub struct Arrival {
     pub stationName: String,
     pub lineId: String,
     pub platformName: String,
-    pub direction: String,
-    pub destinationName: String,
+    // pub direction: String,
+    // pub destinationName: String,
     pub timeToStation: i32,
     pub currentLocation: String,
     pub expectedArrival: String,
@@ -146,6 +152,7 @@ pub struct Route {
     pub name: String,
     pub naptanIds: Vec<String>
 }
+#[derive(Clone)]
 pub struct Station {
     pub naptan_id: String,
 }
@@ -158,6 +165,7 @@ pub struct Link {
     pub link_name: String,
     pub is_current: bool
 }
+#[derive(Clone)]
 pub struct LiveMap {
     pub stops_0: Vec<Station>,
     // pub links: LinkedList<Link>,
@@ -169,18 +177,24 @@ impl Default for LiveMap {
         LiveMap { stops_0: Vec::new(), stops_1: Vec::new(), trains_currently_at: Vec::new() }
     }
 }
+#[derive(Clone)]
 pub struct StationNode {
     pub naptan_id: String,
     pub rect: Rectangle,
 }
 
 #[tokio::main]
-pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, ai_model: &NERModel) -> io::Result<()> {
+pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+    // create reqwest client
+    app.api_client = Some(Client::new());
+
     // load data once here before loop
-    let result = reqwest::get("https://api.tfl.gov.uk/line/mode/tube/status").await.unwrap().json::<Vec<Line>>().await.unwrap();
+    let result = app.api_client.as_ref().unwrap().get("https://api.tfl.gov.uk/line/mode/tube/status").send().await.unwrap().json::<Vec<Line>>().await.unwrap();
     let names = result.iter().map(|i| String::from(&i.name)).collect::<Vec<_>>();
     app.lineNames = names;
     app.lineData = result;
+
+    app.line_cache.insert(String::from("lineNames"), app.lineNames.clone());
 
     // begin loop
     loop {
@@ -207,9 +221,8 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, ai_mo
                     // refresh data
                     KeyCode::Char('r') => {
                         // refresh all data here manually
-                        let result = reqwest::get("https://api.tfl.gov.uk/line/mode/tube/status").await.unwrap().json::<Vec<Line>>().await.unwrap();
-                        let names = result.iter().map(|i| String::from(&i.name)).collect::<Vec<_>>();
-                        app.lineNames = names;
+                        let result = app.api_client.as_ref().unwrap().get("https://api.tfl.gov.uk/line/mode/tube/status").send().await.unwrap().json::<Vec<Line>>().await.unwrap();
+                        app.lineNames = app.line_cache["lineNames"].clone();
                         app.lineData = result;
                     }
 
@@ -251,121 +264,143 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, ai_mo
                         app.this_station_name = app.input.drain(..).collect();
                         let _ = app.this_StopTimetable.unique_lines.drain();
 
-                        // get stop ID -> stop_point.id
-                        let stop_id_search = reqwest::get(format!("https://api.tfl.gov.uk/StopPoint/Search/{}?modes=tube&includeHubs=false", app.this_station_name))
-                            .await
-                            .unwrap()
-                            .json::<StopPointResponse>()
-                            .await
-                            .unwrap();
-                        app.this_StopTimetable.stop_point = match &stop_id_search.matches.len() {
-                            0 => Some(StopPoint::default()),
-                            _ => stop_id_search.matches[0].clone()
-                        };
+                        if app.stop_cache.contains_key(&app.this_station_name) {
+                            // retrieve the cache
+                            // update only refreshed data
 
-                        // use id to fetch arrivals
-                        app.this_StopTimetable.arrivals = reqwest::get(format!("https://api.tfl.gov.uk/StopPoint/{}/Arrivals?mode=tube", app.this_StopTimetable.stop_point.as_ref().unwrap().id))
-                            .await
-                            .unwrap()
-                            .json::<Vec<Arrival>>()
-                            .await
-                            .unwrap_or_default();
+                            app.this_StopTimetable.stop_point = app.stop_cache[&app.this_station_name].stop_point.clone();
+                            app.this_StopTimetable.unique_lines = app.stop_cache[&app.this_station_name].unique_lines.clone();
+                            app.this_StopTimetable.unique_platforms = app.stop_cache[&app.this_station_name].unique_platforms.clone();
+                            app.this_StopTimetable.live_maps = app.stop_cache[&app.this_station_name].live_maps.clone();
+                            app.this_StopTimetable.station_nodes = app.stop_cache[&app.this_station_name].station_nodes.clone();
 
-                        for arrival in &app.this_StopTimetable.arrivals {
-                            app.this_StopTimetable.unique_lines.insert(arrival.lineId.clone());
-                        }
-
-                        // over all lines in this station
-                        for u_line in &app.this_StopTimetable.unique_lines {
-                            let platforms_for_this_line = app.this_StopTimetable.arrivals
-                                .iter()
-                                .enumerate()
-                                .filter(|&(_,i)| i.lineId == u_line.clone())
-                                .map(|(_,e)| e.platformName.clone())
-                                .collect::<Vec<String>>();
-
-                            // sort platforms by line
-                            let mut map: BTreeMap<String, _> = BTreeMap::new();
-                            for platform in platforms_for_this_line {
-                                map.entry(platform.clone()).or_insert(platform);
-                            }
-                            let mut platforms: Vec<String> = Vec::new();
-                            for (platform, _) in &map {
-                                platforms.push(platform.clone());
-                            }
-                            // { key: line(String), value: platform(String) }
-                            app.this_StopTimetable.unique_platforms.insert(u_line.to_string(), platforms);
-                        }
-                        
-                        // fetch all stops and push to live_maps
-                        for line in &app.this_StopTimetable.unique_lines {
-                            let res =reqwest::get(format!("https://api.tfl.gov.uk/Line/{}/Route/Sequence/all", line))
+                            // use id to fetch arrivals
+                            app.this_StopTimetable.arrivals = app.api_client.as_ref().unwrap().get(format!("https://api.tfl.gov.uk/StopPoint/{}/Arrivals?mode=tube", app.this_StopTimetable.stop_point.as_ref().unwrap().id))
+                                .send()
                                 .await
                                 .unwrap()
-                                .json::<RouteResponse>()
+                                .json::<Vec<Arrival>>()
                                 .await
                                 .unwrap();
-                                
-                            app.this_StopTimetable.live_maps.insert(line.to_string(), LiveMap { 
-                                stops_0: res.orderedLineRoutes[0].naptanIds
-                                        .iter()
-                                        .map(|s| Station::new(s.to_string()))
-                                        .collect::<Vec<Station>>(),
-                                stops_1: res.orderedLineRoutes[1].naptanIds
-                                        .iter()
-                                        .map(|s| Station::new(s.to_string()))
-                                        .collect::<Vec<Station>>(),
-                                trains_currently_at: Vec::new()
-                                }
-                            );
                         }
 
-                        
+                        else {
+                            // get stop ID -> stop_point.id
+                            let stop_id_search =  app.api_client.as_ref().unwrap().get(format!("https://api.tfl.gov.uk/StopPoint/Search/{}?modes=tube&includeHubs=false", app.this_station_name))
+                                .send()
+                                .await
+                                .unwrap()
+                                .json::<StopPointResponse>()
+                                .await
+                                .unwrap();
+                            app.this_StopTimetable.stop_point = match &stop_id_search.matches.len() {
+                                0 => Some(StopPoint::default()),
+                                _ => stop_id_search.matches[0].clone()
+                            };
 
-                        // create nodes
-                        for line in &app.this_StopTimetable.unique_lines {
-                            let mut x_0 = 12.5;
-                            let y = 50.0;
-                            let mut x_1 = 12.5;
-                            let mut rects_0: Vec<StationNode> = Vec::new();
-                            let mut rects_1: Vec<StationNode> = Vec::new();
-                            for stop in &app.this_StopTimetable.live_maps[line].stops_0 {
-                                rects_0.push(
-                                    StationNode { 
-                                        naptan_id: stop.naptan_id.clone(),
-                                        rect: Rectangle {
-                                            x:x_0,
-                                            y:y,
-                                            width:2.0,
-                                            height:10.0,
-                                            color: match &stop.naptan_id == &app.this_StopTimetable.stop_point.clone().unwrap().id {
-                                                true => Color::LightGreen,
-                                                false => Color::LightYellow
-                                            }
-                                        },
+                            // use id to fetch arrivals
+                            app.this_StopTimetable.arrivals =  app.api_client.as_ref().unwrap().get(format!("https://api.tfl.gov.uk/StopPoint/{}/Arrivals?mode=tube", app.this_StopTimetable.stop_point.as_ref().unwrap().id))
+                                .send()
+                                .await
+                                .unwrap()
+                                .json::<Vec<Arrival>>()
+                                .await
+                                .unwrap();
+
+                            for arrival in &app.this_StopTimetable.arrivals {
+                                app.this_StopTimetable.unique_lines.insert(arrival.lineId.clone());
+                            }
+
+                            // over all lines in this station
+                            for u_line in &app.this_StopTimetable.unique_lines {
+                                let platforms_for_this_line = app.this_StopTimetable.arrivals
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|&(_,i)| i.lineId == u_line.clone())
+                                    .map(|(_,e)| e.platformName.clone())
+                                    .collect::<Vec<String>>();
+
+                                // sort platforms by line
+                                let mut map: BTreeMap<String, _> = BTreeMap::new();
+                                for platform in platforms_for_this_line {
+                                    map.entry(platform.clone()).or_insert(platform);
+                                }
+                                let mut platforms: Vec<String> = Vec::new();
+                                for (platform, _) in &map {
+                                    platforms.push(platform.clone());
+                                }
+                                // { key: line(String), value: platform(String) }
+                                app.this_StopTimetable.unique_platforms.insert(u_line.to_string(), platforms);
+
+
+                                //
+                                let res =  app.api_client.as_ref().unwrap().get(format!("https://api.tfl.gov.uk/Line/{}/Route/Sequence/all", u_line))
+                                    .send()
+                                    .await
+                                    .unwrap()
+                                    .json::<RouteResponse>()
+                                    .await
+                                    .unwrap();
+                                
+                                app.this_StopTimetable.live_maps.insert(u_line.to_string(), LiveMap { 
+                                    stops_0: res.orderedLineRoutes[0].naptanIds
+                                            .iter()
+                                            .map(|s| Station::new(s.to_string()))
+                                            .collect::<Vec<Station>>(),
+                                    stops_1: res.orderedLineRoutes[1].naptanIds
+                                            .iter()
+                                            .map(|s| Station::new(s.to_string()))
+                                            .collect::<Vec<Station>>(),
+                                    trains_currently_at: Vec::new()
                                     }
                                 );
-                                x_0 += 3.5;
+
+
+
+                                let mut x_0 = 12.5;
+                                let y = 50.0;
+                                let mut x_1 = 12.5;
+                                let mut rects_0: Vec<StationNode> = Vec::new();
+                                let mut rects_1: Vec<StationNode> = Vec::new();
+                                for stop in &app.this_StopTimetable.live_maps[u_line].stops_0 {
+                                    rects_0.push(
+                                        StationNode {
+                                            naptan_id: stop.naptan_id.clone(),
+                                            rect: Rectangle {
+                                                x:x_0,
+                                                y:y,
+                                                width:2.0,
+                                                height:10.0,
+                                                color: match &stop.naptan_id == &app.this_StopTimetable.stop_point.clone().unwrap().id {
+                                                    true => Color::LightGreen,
+                                                    false => Color::LightYellow
+                                                }
+                                            },
+                                        }
+                                    );
+                                    x_0 += 3.5;
+                                }
+                                for stop in &app.this_StopTimetable.live_maps[u_line].stops_1 {
+                                    rects_1.push(
+                                        StationNode { 
+                                            naptan_id: stop.naptan_id.clone(),
+                                            rect: Rectangle {
+                                                x:x_1,
+                                                y:y,
+                                                width:2.0,
+                                                height:10.0,
+                                                color: match &stop.naptan_id == &app.this_StopTimetable.stop_point.clone().unwrap().id {
+                                                    true => Color::LightGreen,
+                                                    false => Color::LightYellow
+                                                }
+                                            },
+                                        }
+                                    );
+                                    x_1 += 3.5;
+                                }
+                                app.this_StopTimetable.station_nodes.insert(u_line.to_string(), vec!(rects_0, rects_1));
                             }
-                            for stop in &app.this_StopTimetable.live_maps[line].stops_1 {
-                                rects_1.push(
-                                    StationNode { 
-                                        naptan_id: stop.naptan_id.clone(),
-                                        rect: Rectangle {
-                                            x:x_1,
-                                            y:y,
-                                            width:2.0,
-                                            height:10.0,
-                                            color: match &stop.naptan_id == &app.this_StopTimetable.stop_point.clone().unwrap().id {
-                                                true => Color::LightGreen,
-                                                false => Color::LightYellow
-                                            }
-                                        },
-                                    }
-                                );
-                                x_1 += 3.5;
-                            }
-                            app.station_nodes.insert(line.to_string(), vec!(rects_0, rects_1));
+                            app.stop_cache.insert(format!("{}", app.this_station_name), app.this_StopTimetable.clone());
                         }
                     }
                     KeyCode::Char(c) => {
