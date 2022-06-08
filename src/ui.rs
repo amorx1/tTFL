@@ -112,7 +112,7 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                     .split(chunks[0]);
 
                 //
-                let constraints = match app.this_StopTimetable.unique_lines.len() {
+                let line_constraints = match app.this_StopTimetable.unique_lines.len() {
                     0 => [Constraint::Percentage(0)].as_ref(),
                     1 => [Constraint::Percentage(100)].as_ref(),
                     2 => [Constraint::Percentage(50), Constraint::Percentage(50)].as_ref(),
@@ -125,7 +125,7 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                 // split into Line rows
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints(constraints)
+                    .constraints(line_constraints)
                     .split(chunks[0]);
 
                 let mut row_count = 0;
@@ -149,7 +149,7 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
 
                         {
                             let num_platforms = app.this_StopTimetable.unique_platforms[&line.clone()].len();
-                            let constraints = match num_platforms {
+                            let platform_constraints = match num_platforms {
                                 0 => [Constraint::Percentage(0)].as_ref(),
                                 1 => [Constraint::Percentage(100)].as_ref(),
                                 2 => [Constraint::Percentage(50), Constraint::Percentage(50)].as_ref(),
@@ -161,7 +161,7 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
 
                             let cols = Layout::default()
                                 .direction(Direction::Horizontal)
-                                .constraints(constraints)
+                                .constraints(platform_constraints)
                                 .split(chunks[0]);
 
                             let mut col_count = 0;
@@ -236,7 +236,7 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                                     Block::default()
                                 )
                                 .paint(|ctx| {
-                                    for station_node in &app.station_nodes[line][0] {
+                                    for station_node in &app.this_StopTimetable.station_nodes[line][0] {
                                         ctx.draw(&station_node.rect);
                                     }
                                 })
@@ -251,7 +251,7 @@ fn draw_timetable<B: Backend>(f: &mut Frame<B>, app: &App, area: Rect) {
                                     Block::default()
                                 )
                                 .paint(|ctx| {
-                                    for station_node in &app.station_nodes[line][1] {
+                                    for station_node in &app.this_StopTimetable.station_nodes[line][1] {
                                         ctx.draw(&station_node.rect);
                                     }
                                 })
