@@ -264,17 +264,18 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                         app.this_station_name = app.input.drain(..).collect();
                         let _ = app.this_StopTimetable.unique_lines.drain();
 
+                        // check if we have station data in cache
                         if app.stop_cache.contains_key(&app.this_station_name) {
+                            
                             // retrieve the cache
-                            // update only refreshed data
-
                             app.this_StopTimetable.stop_point = app.stop_cache[&app.this_station_name].stop_point.clone();
                             app.this_StopTimetable.unique_lines = app.stop_cache[&app.this_station_name].unique_lines.clone();
                             app.this_StopTimetable.unique_platforms = app.stop_cache[&app.this_station_name].unique_platforms.clone();
                             app.this_StopTimetable.live_maps = app.stop_cache[&app.this_station_name].live_maps.clone();
+                            // CANNOT CACHE WHEN CURRENT STATIONS ARE IMPLEMENTED
                             app.this_StopTimetable.station_nodes = app.stop_cache[&app.this_station_name].station_nodes.clone();
 
-                            // use id to fetch arrivals
+                            // only arrivals needs refreshing
                             app.this_StopTimetable.arrivals = app.api_client.as_ref().unwrap().get(format!("https://api.tfl.gov.uk/StopPoint/{}/Arrivals?mode=tube", app.this_StopTimetable.stop_point.as_ref().unwrap().id))
                                 .send()
                                 .await
@@ -282,8 +283,26 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                                 .json::<Vec<Arrival>>()
                                 .await
                                 .unwrap();
+
+                            // for each line
+                            let mut dispatch: Vec<String> = Vec::new();
+                            for line in &app.this_StopTimetable.unique_lines {
+                                let _ = app.this_StopTimetable.arrivals
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, a)| a.lineId == line.clone())
+                                    .map(|(_, e)| dispatch.push(String::from(e.currentLocation.clone())))
+                                    .collect::<Vec<_>>();
+                            }
+
+                            // send to NER service
+                            // let parsed_game = app.api_client.as_ref().unwrap().get("").send().await.unwrap();
+
+                            // update cache
+                            app.stop_cache.entry(app.this_station_name.clone()).or_insert(app.this_StopTimetable.clone());
                         }
 
+                        // not in cache
                         else {
                             // get stop ID -> stop_point.id
                             let stop_id_search =  app.api_client.as_ref().unwrap().get(format!("https://api.tfl.gov.uk/StopPoint/Search/{}?modes=tube&includeHubs=false", app.this_station_name))
