@@ -296,6 +296,17 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io
                             }
 
                             // send to NER service
+                            let mut map = HashMap::new();
+                            map.insert("query", dispatch);
+                            let parsed_currents = app.api_client.as_ref().unwrap().post("http://127.0.0.1:8081/parse")
+                                .header("Content-Type", "application/json")
+                                .json(&map)
+                                .send()
+                                .await
+                                .unwrap()
+                                .json::<Vec<String>>()
+                                .await
+                                .unwrap();
                             // let parsed_game = app.api_client.as_ref().unwrap().get("").send().await.unwrap();
 
                             // update cache
